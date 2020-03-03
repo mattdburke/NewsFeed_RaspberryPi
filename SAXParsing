@@ -1,0 +1,882 @@
+# Title: Readability for NewsReadPrice
+
+# Description: Carry out a series of readability analyses
+# on the Reuters data. I made additions in July '19 which
+# include some textual controls from Tetlock (2011).
+
+# Author: Matt Burke
+
+# Last modified: 31/07/2019
+
+import time
+start = time.time()
+
+# report size of python objects
+from sys import getsizeof
+# display progress of the parsing
+from progress.bar import Bar as CB
+# to establish time taken to complete the program
+import time
+# not sure yet
+import socket                                                           
+# for the parser tool
+import xml.sax
+# for defining the dataframe
+import pandas as pd
+# using regular expressions at various intervals for tidying
+import re
+# to be able to help define the nested list in product codes
+import itertools
+# Define missing values so they can be removed
+from numpy import nan 
+# for the parser
+import lxml
+# for plotting, although most of this can be done by 
+#exporting dataframes to csv and done in R along 
+#with the other analysis
+#import matplotlib.pyplot as plt
+# for plotting, i think?
+import pyparsing
+# for counting unique values
+from collections import Counter
+# for dealing with times at #13
+from datetime import datetime
+# punctuation folder
+from string import punctuation
+# sentence tokenizer
+from nltk.tokenize import sent_tokenize, word_tokenize
+# word tokenize
+from nltk.tokenize import word_tokenize as wt
+# identifying numbers
+from curses.ascii import isdigit 
+# key text analytics program
+import nltk
+# import a well used dictionary 
+from nltk.corpus import cmudict
+# this word list is important
+from nltk.corpus import stopwords
+# useful for various operations, general program
+import math
+# tool for lemmatizing words
+from nltk.stem import WordNetLemmatizer
+lemmatizer = WordNetLemmatizer()
+# for array building
+import numpy as np
+# useful for an unconventional temporary variables store
+import copy
+
+
+
+# these lists are to store data as global variables so they
+# can be reused and recalled throughout the program
+list_Id = []
+list_TimeStamp = []
+list_urgency = []
+list_language = []
+list_TakeSequence = []
+
+list_fog = []
+list_word_count = []
+list_percent_complex_words = []
+list_average_wps = []
+list_vocabulary = []
+list_ambiguity = []
+list_common_words = []
+list_financial_terminology = []
+
+list_unique_words = []
+list_earn_words = []
+
+list_firm_news = []
+
+
+# need to import the original LM dictionary. They establish
+# weak modal words which is useful for us, we use this
+# as a reference for ambiguous words. The following
+# imports the dictionary and converts it into a list to be 
+# checked against later.
+LM_master_dictionary = pd.read_csv('LM_master_2018.csv')
+weak_modal_words = (LM_master_dictionary.query('Modal==3'))
+weak_modal_words = weak_modal_words['Word'].tolist()
+weak_modal_words = [i.lower() for i in weak_modal_words]
+
+# we also need financial terminology lists, we take campbell
+# harveys list as standard.
+Financial_Term_Path = 'C:\\Users\\mattb\\OneDrive - University of East Anglia\\PhD\\Project_NewsReadPrice\\'
+Financial_Term = pd.read_csv \
+(Financial_Term_Path+'financewordsLM.csv')
+financial_words = Financial_Term['Word'].tolist()
+
+# the final list is the list of words used in the reuters
+# archive taken from the same articles. This 
+# happens because we need to establish common words.
+common_dict = pd.read_csv("reuters_dict.csv", keep_default_na = False)
+#common_dict = pd.read_csv("reuters_dict.csv")
+number_of_unique_words = len(common_dict.index)
+common_dict.columns = ['index', 'word', 'occurrence', 'freq']
+common_dict = dict(zip(common_dict.word, common_dict.freq))
+
+with open('StopWords_GenericLong.txt', 'r') as stop:
+	StopWords = [line.strip() for line in stop]
+
+# creating the list of codes for listed firms
+nyse_list = pd.read_csv('NYSE.csv')
+nyse_list = (nyse_list['Symbol'].tolist())
+nyse_list = [i.strip() for i in nyse_list]
+nyse_list = [i+".N" for i in nyse_list]
+amex_list = pd.read_csv('AMEX.csv')
+amex_list = (amex_list['Symbol'].tolist())
+amex_list = [i.strip() for i in amex_list]
+amex_list = [i+".A" for i in amex_list]
+nasdaq_list = pd.read_csv('NASDAQ.csv')
+nasdaq_list = (nasdaq_list['Symbol'].tolist())
+nasdaq_list = [i.strip() for i in nasdaq_list]
+nasdaq_list = [i+".O" for i in nasdaq_list]
+rics_list = nyse_list + amex_list + nasdaq_list
+
+
+
+
+
+d = cmudict.dict()
+
+
+# A. Syllable counting grouping
+
+numsyllables_pronlist = lambda l: len(list(filter
+	(lambda s: isdigit(s.encode('ascii', 'ignore').lower()[-1]), l)))
+d = cmudict.dict()
+def numsyllables(word):
+	try:
+		return list(set(map(numsyllables_pronlist, d[word.lower()])))
+	except KeyError:
+		return [0]	
+def sup_syl(text):
+	syllable_count = sum(map(lambda w: max(numsyllables(w)), 
+		wt(text)))
+	return syllable_count
+	
+# 1. Fog Index Function
+
+def fogindex(text):
+	# function for tokenizing text
+	word_tokenizer = lambda x: re.findall(r"\w+(?:[-']\w+)*|'|[-.(]+|\S\w*", x, flags = re.IGNORECASE)
+	# tokenize the sentences
+	sentences = sent_tokenize(text)
+	# lower case
+	text = text.lower()
+	# tokenize and remove punctuation
+	text = [x for x in word_tokenizer(text) if not x in punctuation]
+	# create a list of the syllable count for the corresponding
+	# word
+	syllables = [sup_syl(i) for i in text]
+	#print (text)
+	# create a list of 1's equal to the length of the number of 
+	# words with syllables greater than 2
+	complexwords = [1 for x in syllables if x>2]
+	# remove apostrophes, we need to do this so that we retain
+	# words with apostrophes after we remove tokens which are 
+	# not all alphabetical, i.e. numbers.
+	text = [i.replace("'", "") for i in text]
+	words = [x.isalpha() for x in text]
+	# create the variables
+	wps = (sum(words))/(len(sentences))
+	pc = (len(complexwords))/(sum(words))
+	return (0.4*((wps)+100*(pc)))
+	
+# 2. Word Count Function
+
+def word_count(text):
+	# function for tokenizing text
+	word_tokenizer = lambda x: re.findall(r"\w+(?:[-']\w+)*|'|[-.(]+|\S\w*", x, flags = re.IGNORECASE)		
+	# lower case
+	text = text.lower()
+	# tokenize and remove punctuation
+	text = [x for x in word_tokenizer(text) if not x in punctuation]
+	# remove apostrophes so we retain words when removing numbers
+	text = [i.replace("'", "") for i in text]
+	text = [x.isalpha() for x in text]
+	return (len(text))
+
+# 3. Percent Complex Words Function
+
+def pc_complex_words(text):
+	# function for tokenizing text
+	word_tokenizer = lambda x: re.findall(r"\w+(?:[-']\w+)*|'|[-.(]+|\S\w*", x, flags = re.IGNORECASE)		
+	# lower case
+	text = text.lower()
+	# tokenize and remove punctuation
+	text = [x for x in word_tokenizer(text) if not x in punctuation]
+	# create a list of syllable count for the corresponding word
+	syllables = [sup_syl(i) for i in text]
+	# remove apostrophes so we retain words when removing number
+	text = [i.replace("'", "") for i in text]
+	text = [x.isalpha() for x in text]
+	# count the number of words
+	count = len(text)
+	complexwords = [1 for x in syllables if int(x)>2]
+	pc = (len(complexwords))/(count)
+	return (pc)	
+		
+# 4. Financial Terminology Function
+
+def financial_terminology(text):
+	word_tokenizer = lambda x: re.findall(r"\w+(?:[-']\w+)*|'|[-.(]+|\S\w*", x, flags = re.IGNORECASE)
+	# convert to lower case
+	text = text.lower()
+	# tokenize and remove punctuation
+	text = [x for x in word_tokenizer(text) if not x in punctuation]
+	# remove stop words (neutral content)
+	text = list(set(text) - set(StopWords))
+	# remove ownership and plural
+	text = [i.replace("'", "") for i in text]
+	text = [x for x in text if x.isalpha()]
+	# remove word repetitions
+	text = (np.unique(text))
+	# lemmatize the remaining words for standardization
+	words = [lemmatizer.lemmatize(i) for i in text]
+	# return a set of words which is in both finance
+	# and the news item
+	fin_words = [x for x in financial_words if x in words]
+	return (len(fin_words)/len(words))
+	
+# 5. Common Words Function	
+	
+def common_words(text):
+	word_tokenizer = lambda x: re.findall(r"\w+(?:[-']\w+)*|'|[-.(]+|\S\w*", x, flags = re.IGNORECASE)
+	# convert to lower case
+	text = text.lower()
+	# tokenize and remove punctuation
+	text = [x for x in word_tokenizer(text) if not x in punctuation]
+	text = [i.replace("'", "") for i in text]
+	text = [x for x in text if x.isalpha()]
+	word_count_v1 = len(text)
+	text = [lemmatizer.lemmatize(i) for i in text]
+	text = [common_dict[x] for x in text]
+	return sum(text)/word_count_v1	
+	
+# 6. Vocabulary Function 
+	
+def vocabulary(text): 
+	word_tokenizer = lambda x: re.findall(r"\w+(?:[-']\w+)*|'|[-.(]+|\S\w*", x, flags = re.IGNORECASE)
+	text = text.lower()
+	text = [x for x in word_tokenizer(text) if not x in punctuation]
+	text = [i.replace("'", "") for i in text]
+	text = [x for x in text if x.isalpha()]
+	text = [lemmatizer.lemmatize(i) for i in text]
+	text = (np.unique(text))
+	return len(text)/number_of_unique_words
+	
+# 7. Ambiguity Function
+	
+def ambiguity(text):
+	word_tokenizer = lambda x: (re.findall
+		(r"\w+(?:[-']\w+)*|'|[-.(]+|\S\w*", x, flags = re.IGNORECASE))
+	# convert to lower case
+	text = text.lower()
+	# tokenize items and remove punctuation
+	text = [x for x in word_tokenizer(text) if not x in punctuation]
+	# remove stop words
+	text = list(set(text) - set(StopWords))
+	# remove apostrophes and numbers, but keep all words
+	text = [x.replace("'", "") for x in text]
+	text = [x for x in text if x.isalpha()]
+	# remove word repetitions
+	text = (np.unique(text))
+	# lemmatize the remaining words to avoid undercounting
+	words = [lemmatizer.lemmatize(i) for i in text]
+	# return a set of words which is in both weak modal
+	# and the news item
+	weak_modal = [x for x in weak_modal_words if x in words]
+	return (len(weak_modal)/len(words))
+	
+# 8. Average WPS Function
+
+def average_wps(text):
+	word_tokenizer = lambda x: re.findall(r"\w+(?:[-']\w+)*|'|[-.(]+|\S\w*", x, flags = re.IGNORECASE)		
+	# tokenize the sentences
+	sentence_count_v1 = len(sent_tokenize(text))
+	# lower case
+	text = text.lower()
+	# tokenize words
+	text = [x for x in word_tokenizer(text) if not x in punctuation]
+	# remove apostrophes so we retain words when removing numbers
+	text = [i.replace("'", "") for i in text]
+	word_count_v1 = [x for x in text if x.isalpha()]
+	word_count_v1 = len(word_count_v1)
+	# create the variables
+	return (word_count_v1/sentence_count_v1)
+	
+
+# 9. Unique words count
+
+def unique_words(text): 
+	word_tokenizer = lambda x: re.findall(r"\w+(?:[-']\w+)*|'|[-.(]+|\S\w*", x, flags = re.IGNORECASE)
+	text = text.lower()
+	text = [x for x in word_tokenizer(text) if not x in punctuation]
+	text = [i.replace("'", "") for i in text]
+	text = [x for x in text if x.isalpha()]
+	text = [lemmatizer.lemmatize(i) for i in text]
+	text = (np.unique(text))
+	return len(text)
+	
+# 10. Earnings related words
+
+def earn_words(text):
+	word_tokenizer = lambda x: re.findall(r"\w+(?:[-']\w+)*|'|[-.(]+|\S\w*", x, flags = re.IGNORECASE)
+	text = text.lower()
+	text = [x for x in word_tokenizer(text) if not x in punctuation]
+	text = [i.replace("'", "") for i in text]
+	text = [x for x in text if x.isalpha()]
+	text = [lemmatizer.lemmatize(i) for i in text]
+	text = (np.unique(text))
+	earn = [x for x in text if x[:4]=="earn"]
+	if len(earn) > 0:
+		return 1
+	else:
+		return 0
+
+
+class NewsHandler( xml.sax.ContentHandler ):
+	def __init__(self):
+      # self.CurrentData is a flexible caller, you can specify a 
+	  # particular element and if it occurs, then do something with it
+	  # like print it or whatever.
+		self.CurrentData = ""
+	  # The rest of these are intrinsic to the elements.
+		self.ContentEnvelope = ""
+		self.Id = ""
+		self.TimeStamp = ""
+		self.urgency = ""
+		self.language = ""
+		self.TakeSequence = ""
+		self.instanceOf = ""
+		self.body = ""
+		self.altId = ""
+		self.RIC = ""
+		
+      # Call when an element starts
+	def startElement(self, tag, attributes):
+		self.CurrentData = tag
+		# We need to reset this market at the beginning
+		# of each new story - we dont bother analysing
+		# stories if the value is equal to 1 - it wastes
+		# computing power. So it needs resetting.
+		if tag == "ContentEnvelope":
+			self.instanceOf = 0	
+		# within a content envelope, if instanceOf appears
+		# this indicates that the story is a recurring report
+		# like a stock market update
+		# these are not of interest to us so we want to 
+		# record it and observe it somehow.
+		if tag == "instanceOf":
+			self.instanceOf = 1
+		if tag == "language":
+			# stores the language tag
+			self.language = attributes['tag']
+		# we copy the qcode - this relates to a Thomson
+		# Reuters RIC code which associates the story
+		# with a financial product. We are interested 
+		# in stock specific stories so we want to link
+		# it to codes which are the same as in the 
+		# stock market ticker lists defined above.
+		if tag == "subject":
+			self.RIC = "%s %s" % (self.RIC, attributes['qcode'][2:])
+
+
+
+ # Call when a character is read	
+	def characters(self, content):
+		# this is storing the content of each 
+		# of these markers inside a temporary
+		# variable for analysis/storing later
+		if self.CurrentData == "Id":
+			self.Id = content
+		elif self.CurrentData == "TimeStamp":
+			self.TimeStamp = content
+		elif self.CurrentData == "TakeSequence":
+			self.TakeSequence = content
+		elif self.CurrentData == "urgency":
+			self.urgency = content
+		elif self.CurrentData == "altId":
+			self.altId = content
+		elif self.CurrentData == "body":
+		# for the full article we need +=
+			#self.body += content
+			self.body = "%s%s" % (self.body, content)
+
+
+   # Call when an elements ends
+	def endElement(self, tag):
+	# this is where we end up doing a lot of the important
+	# stuff - what do we do with all those temporary variables
+	# defined above - happens here.
+	#	if self.CurrentData == "Id":
+			# we are interested in all but the last four characters,
+			# this allowes the ID to be the same for each iteration
+			# of a news story, ignoring take sequence at the end.
+			# I may encounter a problem with this IF one take sequence
+			# exceeds single digits, in which case I'll have to take
+			# the timestamp section and add the PNAC string.
+			
+	#	if self.CurrentData == "TimeStamp":
+			# some of the timestamps are short or incomplete - not sure
+			# why but maybe a human error. This avoids those stories.
+			
+		if self.CurrentData == "body":
+		# we want to analyse the contents of body - they denote 
+		# an article. But we dont want to analyse every article, 
+		# this takes too long and is often useless. We only want, 
+		# in order;
+			if (self.language == "en" # English 
+			and self.urgency=='3' # Articles
+			and "TOP" not in self.altId # No recurring items
+			and self.instanceOf==0 # Same as above
+			and (0<len([x for x in self.RIC.split() 
+			if x in rics_list])<3) # Firm specific
+			and word_count(self.body)>=50): # Long article
+				ric = [x for x in self.RIC.split()
+					if x in rics_list]
+				#print (ric)
+				#time.sleep(0.2)
+				list_Id.append(self.Id[:-4])
+				if len(self.TimeStamp)==24:
+					list_TimeStamp.append(self.TimeStamp)
+					print (self.TimeStamp)
+				else:
+					list_TimeStamp.append(nan)
+				
+				list_firm_news.append(ric)
+				#print (list_firm_news)
+				#time.sleep(1)
+				#print (self.RIC)
+				#time.sleep(1)
+				try:
+					list_fog.append(fogindex(self.body))
+					list_word_count.append(word_count(self.body))
+					list_percent_complex_words.append(pc_complex_words(self.body))
+					list_financial_terminology.append(financial_terminology(self.body))
+					#try:
+					list_common_words.append(common_words(self.body))
+				#	except KeyError:
+				#		print (self.body)
+				#		time.sleep(3)
+					
+					list_vocabulary.append(vocabulary(self.body))
+					list_ambiguity.append(ambiguity(self.body))
+					list_average_wps.append(average_wps(self.body))
+					list_unique_words.append(unique_words(self.body))
+					list_earn_words.append(earn_words(self.body))
+				except ZeroDivisionError:
+					list_fog.append(nan)
+					list_word_count.append(nan)
+					list_percent_complex_words.append(nan)
+					list_financial_terminology.append(nan)
+					list_common_words.append(nan)
+					list_vocabulary.append(nan)
+					list_ambiguity.append(nan)
+					list_average_wps.append(nan)
+					list_unique_words.append(nan)
+					list_earn_words.append(nan)
+			else:
+				list_fog.append(nan)
+				list_word_count.append(nan)
+				list_percent_complex_words.append(nan)
+				list_financial_terminology.append(nan)
+				list_common_words.append(nan)
+				list_vocabulary.append(nan)
+				list_ambiguity.append(nan)
+				list_average_wps.append(nan)
+				list_unique_words.append(nan)
+				list_earn_words.append(nan)
+				list_Id.append(nan)
+				list_TimeStamp.append(nan)
+				list_firm_news.append(nan)
+			ric = []
+			self.RIC = ""
+			self.body = ""
+		self.CurrentData = ""	
+		
+		
+
+# 5. PARSER CALL AND DATA STORE		
+
+data_path = 'E:\\reuters\\'
+
+
+if ( __name__ == "__main__"):
+	parser = xml.sax.make_parser()
+	parser.setFeature(xml.sax.handler.feature_namespaces, 0)
+	Handler = NewsHandler()
+	parser.setContentHandler( Handler )
+	#parser.parse("E:\reuters")
+	b = CB('  Parsing', max = 150)
+	print ("Beginning Parsing")
+	# Add the file names here to parse
+	#parser.parse("sample.xml")
+	parser.parse(data_path+"RTRS-200301.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200302.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200303.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200304.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200305.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200306.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200307.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200308.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200309.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200310.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200311.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200312.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200401.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200402.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200403.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200404.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200405.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200406.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200407.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200408.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200409.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200410.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200411.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200412.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200501.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200502.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200503.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200504.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200505.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200506.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200507.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200508.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200509.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200510.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200511.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200512.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200601.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200602.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200603.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200604.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200605.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200606.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200607.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200608.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200609.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200610.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200611.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200612.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200701.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200702.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200703.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200704.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200705.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200706.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200707.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200708.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200709.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200710.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200711.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200712.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200801.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200802.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200803.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200804.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200805.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200806.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200807.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200808.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200809.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200810.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200811.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200812.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200901.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200902.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200903.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200904.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200905.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200906.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200907.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200908.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200909.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200910.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200911.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-200912.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201001.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201002.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201003.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201004.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201005.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201006.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201007.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201008.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201009.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201010.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201011.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201012.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201101.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201102.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201103.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201104.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201105.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201106.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201107.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201108.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201109.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201110.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201111.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201112.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201201.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201202.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201203.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201204.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201205.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201206.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201207.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201208.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201209.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201210.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201211.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201212.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201301.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201302.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201303.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201304.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201305.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201306.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201307.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201308.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201309.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201310.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201311.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201312.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201401.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201402.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201403.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201404.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201405.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201406.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201407.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201408.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201409.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201410.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201411.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201412.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201501.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201502.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201503.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201504.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201505.xml")
+	b.next()
+	parser.parse(data_path+"RTRS-201506.xml")
+	b.finish()
+	
+# This is just collecting the bits and pieces together
+# to go into a data frame
+data = {'ID': list_Id, 
+	'Time': list_TimeStamp, 
+	'Fog': list_fog,
+	'WordCount': list_word_count,
+	'Percent Complex Words': list_percent_complex_words,
+	'Average words per sentence': list_average_wps,
+	'Vocabulary': list_vocabulary,
+	'Ambiguity': list_ambiguity,
+	'Common Words': list_common_words, 
+	'Unique Words': list_unique_words,
+	'Earnings Words': list_earn_words,
+	'Financial Terminology': list_financial_terminology,
+	'RIC': list_firm_news}
+
+print (len(list_Id))
+print (len(list_TimeStamp))
+print (len(list_fog))
+print (len(list_word_count))
+print (len(list_percent_complex_words))
+print (len(list_average_wps))
+print (len(list_vocabulary))
+print (len(list_ambiguity))
+print (len(list_common_words))
+print (len(list_unique_words))
+print (len(list_earn_words))
+print (len(list_financial_terminology))
+print (len(list_firm_news))
+	
+# print ("Building dataframe")
+frame = pd.DataFrame(data)
+	
+# print ("Deleting lists")
+del list_Id
+del list_TimeStamp
+del list_fog
+del list_word_count
+del list_percent_complex_words
+del list_average_wps
+del list_vocabulary 
+del list_ambiguity 
+del list_common_words 
+del list_financial_terminology 
+del list_unique_words
+del list_earn_words
+	
+	#convert the timestamps to datetime, a recognised panda object. This is necessary for indexing later.
+frame["Time"] = pd.to_datetime(frame["Time"])
+
+	# take it from the dataframe itself and use it as an index. The column I want as an index is already in my file, hence inplace=TRUE
+frame.set_index("Time", inplace=True)
+
+frame = frame.dropna()
+
+path = 'C:\\Users\\mattb\\OneDrive - University of East Anglia\\PhD\\Project_NewsReadPrice\\'
+
+print (frame.head())
+
+frame.to_csv(path+'reuters_readability.csv')
+
+print ((time.time() - start)/60)
+
+	
+
